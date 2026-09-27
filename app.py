@@ -26,10 +26,13 @@ def get_vietnam_stock_data(symbol, start_date, end_date):
         # Vnstock v4+ Unified API.
         # This avoids relying on the older source-specific Quote API.
         market = Market()
-        df = market.equity.ohlcv(
-            symbol=symbol.upper(),
+        # Vnstock 4.x: equity() is a factory/method that receives the symbol,
+        # then ohlcv() is called on the returned equity object.
+        equity = market.equity(symbol.upper())
+        df = equity.ohlcv(
             start=start_date,
             end=end_date,
+            interval="1D",
         )
 
         if df is None or df.empty:
