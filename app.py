@@ -1,122 +1,146 @@
 from openai import OpenAI
 import streamlit as st
+from vnstock import stock_historical_data  # Thư viện lấy dữ liệu chứng khoán VN
 
 # --- CẤU HÌNH GIAO DIỆN ---
 st.set_page_config(
-    page_title="Quant Trading & DCA Assistant (Webhook)",
+    page_title="Quant Trading & DCA Assistant (VN Stock + DeepSeek)",
     page_icon="📈",
     layout="wide",
 )
 
-st.title("🤖 Trợ lý Phân tích Định lượng & DCA (Tích hợp TradingView Webhook)")
+st.title("🤖 Trợ lý Phân tích Định lượng & DCA (Cổ phiếu Việt Nam & DeepSeek)")
 st.markdown(
-    "Hệ thống tự động nhận dữ liệu từ **TradingView Alert** và gọi **DeepSeek"
-    " API** để tính toán chiến lược."
+    "Hệ thống tự động kết nối **vnstock** để lấy dữ liệu giá thực tế và sử dụng"
+    " **DeepSeek API** để lập chiến lược rải vốn DCA."
 )
 
 # --- THANH CÔNG CỤ (SIDEBAR) ---
 st.sidebar.header("⚙️ Cấu hình hệ thống")
 api_key_input = st.sidebar.text_input("DeepSeek API Key:", type="password")
 
-# --- NHẬN DỮ LIỆU TỰ ĐỘNG TỪ TRADINGVIEW (WEBHOOK QUERY PARAMS) ---
-# Khi TradingView bắn alert kèm đường dẫn dạng: ?symbol=XAUUSD&price=2625&status=...
-query_params = st.query_params
-
-auto_symbol = query_params.get("symbol", "XAUUSD")
-auto_price = query_params.get("price", "2625")
-auto_status = query_params.get(
-    "status", "Giá chạm vùng hỗ trợ kỹ thuật, cần tính toán DCA."
-)
-
 st.sidebar.divider()
-st.sidebar.subheader("📊 Thông tin Thị trường & Lệnh")
+st.sidebar.subheader("📊 Thông tin Cổ phiếu Việt Nam")
 
-market_category = st.sidebar.selectbox(
-    "Chọn thị trường giao dịch",
-    ["Forex (XAUUSD)", "Crypto (BTCUSD)", "Cổ phiếu Việt Nam"],
-)
-
-symbol = st.sidebar.text_input("Mã tài sản", value=auto_symbol)
+# Nhập mã cổ phiếu (VD: HPG, ACB, TCB, VNM, MBB...)
+symbol_input = st.sidebar.text_input(
+    "Mã cổ phiếu (Viết hoa)", value="ACB"
+).upper()
 capital = st.sidebar.number_input(
-    "Tổng vốn hiện tại (USD hoặc VNĐ)", value=5000.0, step=1000.0
+    "Tổng vốn phân bổ (VNĐ)", value=50000000.0, step=5000000.0
 )
 
-current_status = st.sidebar.text_area(
-    "Trạng thái vị thế / Giá từ TradingView",
-    value=(
-        f"Giá hiện tại từ TradingView: {auto_price}. Tình trạng:"
-        f" {auto_status}"
-    ),
-    height=100,
+user_position = st.sidebar.text_area(
+    "Trạng thái vị thế hiện tại của bạn",
+    value="Đã mua gom giá trung bình 27.5, hiện tỷ trọng chiếm 30% danh mục.",
+    height=80,
 )
 
-tech_indicators = st.sidebar.text_area(
-    "Dữ liệu kỹ thuật / Khung thời gian / Hỗ trợ",
-    value=(
-        "Tự động kích hoạt từ cảnh báo kỹ thuật trên biểu đồ TradingView."
-    ),
-    height=100,
-)
-
-# --- XỬ LÝ KHI BẤM NÚT HOẶC NHẬN TÍN HIỆU ---
-if st.sidebar.button("🚀 Chạy Phân Tích Định Lượng & DCA") or query_params:
-  if not api_key_input:
-    st.error(
-        "⚠️ Vui lòng nhập DeepSeek API Key ở thanh bên trái để hệ thống xử lý"
-        " tự động!"
+# --- HÀM LẤY DỮ LIỆU TỰ ĐỘNG TỪ VNSTOCK ---
+@st.cache_data(ttl=3600)  # Cache dữ liệu trong 1 giờ để tối ưu tốc độ
+def get_vietnam_stock_data(symbol):
+  try:
+    # Lấy dữ liệu lịch sử 60 phiên gần nhất để tính toán xu hướng
+    df = stock_historical_data(
+        symbol=symbol,
+        start_date="2025-01-01",
+        end_date="2026-12-31",
+        resolution="1D",
+        type="stock",
+        source="VCI",
     )
+    if df is not None and not df.empty:
+      latest = df.iloc[-1]  # Phiên giao dịch gần nhất
+      prev = df.iloc[-2]  # Phiên liền trước
+      change_pct = ((latest["close"] - prev["close"]) / prev["close"]) * 100
+
+      market_info = (
+          f"Mã: {symbol} | Ngày giao dịch gần nhất: {latest.get('time', 'Nôm' )}\n"
+          f"- Giá đóng cửa gần nhất: {latest['close']:,.0f} VNĐ\n"
+          f"- Thay đổi so với phiên trước: {change_pct:+.2f}%\n"
+          f"- Khối lượng giao dịch: {latest['volume']:,} cổ phiếu\n"
+          f"- Giá cao nhất phiên: {latest['high']:,.0f} VNĐ | Giá thấp nhất"
+          f" phiên: {latest['low']:,.0f} VNĐ"
+      )
+      return market_info, df
+    else:
+      return None, None
+  except Exception as e:
+    return None, str(e)
+
+
+# --- XỬ LÝ KHI BẤM NÚT PHÂN TÍCH ---
+if st.sidebar.button("🚀 Lấy Dữ Liệu & Phân Tích Định Lượng"):
+  if not api_key_input:
+    st.error("⚠️ Vui lòng nhập DeepSeek API Key ở thanh bên trái!")
+  elif not symbol_input:
+    st.error("⚠️ Vui lòng nhập mã cổ phiếu!")
   else:
-    try:
-      client = OpenAI(api_key=api_key_input, base_url="https://api.deepseek.com")
+    with st.spinner(
+        f"🔄 Đang kết nối lấy dữ liệu giá thực tế của mã {symbol_input}..."
+    ):
+      stock_data_text, raw_df = get_vietnam_stock_data(symbol_input)
 
-      prompt = f"""
-            Bạn là một chuyên gia phân tích định lượng tài chính và quản trị rủi ro chuyên nghiệp (Quant Trader). 
-            Hãy lập một kế hoạch giao dịch và chiến lược DCA (Dollar-Cost Averaging) chi tiết dựa trên dữ liệu thời gian thực sau:
-            - Thị trường: {market_category} - Mã: {symbol}
-            - Tổng vốn phân bổ: {capital:,.0f}
-            - Dữ liệu giá & Vị thế thực tế: {current_status}
-            - Dữ liệu kỹ thuật / Hỗ trợ: {tech_indicators}
+    if stock_data_text is None:
+      st.error(
+          f"❌ Không thể lấy dữ liệu cho mã '{symbol_input}'. Lỗi:"
+          f" {raw_df}. Vui lòng kiểm tra lại mã chứng khoán."
+      )
+    else:
+      st.success("✅ Đã lấy dữ liệu giá thị trường thành công từ vnstock!")
 
-            Yêu cầu cấu trúc đầu ra bắt buộc bằng tiếng Việt:
-            1. **NHẬN ĐỊNH XU HƯỚNG:** Đánh giá nhanh ngắn hạn và rủi ro hiện tại dựa trên giá real-time.
-            2. **KẾ HOẠCH QUẢN TRỊ VỊ THẾ HIỆN TẠI:** Đánh giá trạng thái và mức độ rủi ro vốn.
-            3. **CHIẾN LƯỢC RẢI VỐN DCA (Nếu thị trường tiếp tục đi ngược hướng):** 
-               - Mốc DCA 1: Giá [...] - Tỷ trọng vốn/Khối lượng đề xuất: [...] - Cơ sở kỹ thuật: [...]
-               - Mốc DCA 2: Giá [...] - Tỷ trọng vốn/Khối lượng đề xuất: [...] - Cơ sở kỹ thuật: [...]
-            4. **QUẢN TRỊ RỦI RO & THOÁT LỆNH:** Điểm Stop Loss tổng (SL) cho toàn bộ chiến lược và Mục tiêu chốt lời (TP).
-            """
+      # Hiển thị thông tin giá nhanh ra giao diện
+      st.info(f"📊 **Dữ liệu thị trường mới nhất của {symbol_input}:**")
+      st.text(stock_data_text)
 
-      with st.spinner(
-          "🔄 Đang nhận tín hiệu từ TradingView và gọi DeepSeek phân"
-          " tích..."
-      ):
-        response = client.chat.completions.create(
-            model="deepseek-chat",
-            messages=[
-                {
-                    "role": "system",
-                    "content": (
-                        "Bạn là trợ lý phân tích định lượng tài chính xuất sắc,"
-                        " đưa ra các con số tính toán rủi ro và DCA cực kỳ sắc"
-                        " bén."
-                    ),
-                },
-                {"role": "user", "content": prompt},
-            ],
-            stream=False,
-        )
-        result = response.choices[0].message.content
+      # --- GỌI DEEPSEEK API PHÂN TÍCH CHIẾN LƯỢC ---
+      with st.spinner("🤖 DeepSeek đang tính toán kỹ thuật và chiến lược DCA..."):
+        try:
+          client = OpenAI(
+              api_key=api_key_input, base_url="https://api.deepseek.com"
+          )
 
-        st.success(
-            "✅ Đã tiếp nhận tín hiệu và phân tích thành công từ dữ liệu"
-            " thực tế!"
-        )
-        st.markdown("---")
-        st.markdown(
-            f"### 📈 Báo cáo Chiến lược Định lượng thời gian thực cho:"
-            f" **{symbol}**"
-        )
-        st.markdown(result)
+          prompt = f"""
+                    Bạn là một chuyên gia phân tích định lượng tài chính và quản trị rủi ro chuyên nghiệp (Quant Trader trên thị trường chứng khoán Việt Nam). 
+                    Hãy lập một kế hoạch giao dịch và chiến lược DCA (Dollar-Cost Averaging) chi tiết dựa trên dữ liệu thực tế sau:
+                    - Mã cổ phiếu: {symbol_input}
+                    - Dữ liệu giá thị trường thực tế mới nhất:
+                    {stock_data_text}
+                    - Tổng vốn phân bổ cho mã này: {capital:,.0f} VNĐ
+                    - Trạng thái vị thế hiện tại của nhà đầu tư: {user_position}
 
-    except Exception as e:
-        st.error(f"❌ Đã xảy ra lỗi khi kết nối DeepSeek API: {e}")
+                    Yêu cầu cấu trúc đầu ra bắt buộc bằng tiếng Việt:
+                    1. **NHẬN ĐỊNH XU HƯỚNG KỸ THUẬT:** Đánh giá xu hướng ngắn hạn dựa trên mức giá và khối lượng thực tế vừa cung cấp.
+                    2. **ĐÁNH GIÁ VỊ THẾ HIỆN TẠI:** Phân tích trạng thái lỗ/lãi và mức độ rủi ro với số vốn hiện tại.
+                    3. **CHIẾN LƯỢC RẢI VỐN DCA (Nếu thị trường tiếp tục điều chỉnh):** 
+                       - Mốc DCA 1: Vùng giá [...] - Tỷ trọng vốn/Số lượng cổ phiếu đề xuất: [...] - Cơ sở kỹ thuật: [...]
+                       - Mốc DCA 2: Vùng giá [...] - Tỷ trọng vốn/Số lượng cổ phiếu đề xuất: [...] - Cơ sở kỹ thuật: [...]
+                    4. **QUẢN TRỊ RỦI RO & THOÁT LỆNH:** Điểm cắt lỗ tổng (Stop Loss) và Mục tiêu chốt lời (Take Profit).
+                    """
+
+          response = client.chat.completions.create(
+              model="deepseek-chat",
+              messages=[
+                  {
+                      "role": "system",
+                      "content": (
+                          "Bạn là trợ lý phân tích định lượng tài chính xuất sắc,"
+                          " chuyên gia phân tích thị trường chứng khoán Việt"
+                          " Nam."
+                      ),
+                  },
+                  {"role": "user", "content": prompt},
+              ],
+              stream=False,
+          )
+
+          result = response.choices[0].message.content
+
+          st.markdown("---")
+          st.markdown(
+              f"### 📈 Báo cáo Chiến lược Định lượng cho: **{symbol_input}**"
+          )
+          st.markdown(result)
+
+        except Exception as e:
+          st.error(f"❌ Đã xảy ra lỗi khi kết nối DeepSeek API: {e}")
