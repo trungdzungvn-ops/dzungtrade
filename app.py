@@ -109,9 +109,9 @@ if st.sidebar.button("🚀 Chạy Phân Tích Định Lượng & DCA"):
           "🔄 Google Gemini đang tính toán xác suất và lập kế hoạch chiến"
           " lược..."
       ):
-        # Gọi model gemini-2.5-flash (hoặc gemini-2.5-pro cho suy luận sâu)
+        # Đã cập nhật model từ gemini-2.5-flash sang gemini-3.8-flash theo yêu cầu hệ thống
         response = client.models.generate_content(
-            model="gemini-2.5-flash",
+            model="gemini-3.8-flash",
             contents=prompt,
             config=types.GenerateContentConfig(
                 system_instruction=(
