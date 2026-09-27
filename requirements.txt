@@ -1,6 +1,7 @@
-streamlit
-vnstock
-openai
-pandas
-numpy
-plotly
+--extra-index-url https://vnstocks.com/api/simple
+streamlit>=1.50,<2
+vnstock==4.0.9
+openai>=1.0
+pandas>=2.0
+numpy>=1.26
+plotly>=5.20

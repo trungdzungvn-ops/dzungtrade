@@ -3,7 +3,7 @@ import pandas as pd
 import numpy as np
 import plotly.graph_objects as go
 from openai import OpenAI
-from vnstock import Quote
+from vnstock import Market
 
 # ============================================================
 # CONFIG
@@ -23,11 +23,13 @@ st.caption("VN Stock • Technical Analysis • DCA Calculator • DeepSeek")
 @st.cache_data(ttl=3600)
 def get_vietnam_stock_data(symbol, start_date, end_date):
     try:
-        quote = Quote(symbol=symbol.upper(), source="VCI")
-        df = quote.history(
+        # Vnstock v4+ Unified API.
+        # This avoids relying on the older source-specific Quote API.
+        market = Market()
+        df = market.equity.ohlcv(
+            symbol=symbol.upper(),
             start=start_date,
             end=end_date,
-            interval="1D",
         )
 
         if df is None or df.empty:
@@ -39,7 +41,10 @@ def get_vietnam_stock_data(symbol, start_date, end_date):
         df.columns = [str(c).lower().strip() for c in df.columns]
 
         # Xác định cột ngày
-        date_candidates = ["time", "date", "datetime", "trading_date"]
+        date_candidates = [
+            "time", "date", "datetime", "trading_date",
+            "timestamp", "tradingdate"
+        ]
         date_col = next((c for c in date_candidates if c in df.columns), None)
 
         if date_col:
