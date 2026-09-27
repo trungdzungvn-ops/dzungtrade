@@ -1,31 +1,26 @@
-from openai import OpenAI
+from google import genai
+from google.genai import types
 import streamlit as st
 
 # --- CẤU HÌNH GIAO DIỆN ---
 st.set_page_config(
-    page_title="Quant Trading & DCA Assistant", page_icon="📈", layout="wide"
+    page_title="Quant Trading & DCA Assistant (Gemini)",
+    page_icon="📈",
+    layout="wide",
 )
 
-st.title("🤖 Trợ lý Phân tích Định lượng & Chiến lược DCA")
+st.title("🤖 Trợ lý Phân tích Định lượng & Chiến lược DCA (Google Gemini)")
 st.markdown(
-    "Hệ thống ứng dụng **DeepSeek API** hỗ trợ phân tích điểm vào lệnh, quản"
-    " trị rủi ro và chiến lược rải vốn DCA cho **XAUUSD, BTCUSD & Cổ phiếu"
-    " Việt Nam**."
+    "Hệ thống ứng dụng **Google Gemini API** hỗ trợ phân tích điểm vào lệnh,"
+    " quản trị rủi ro và chiến lược rải vốn DCA cho **XAUUSD, BTCUSD & Cổ"
+    " phiếu Việt Nam**."
 )
 
 # --- THANH CÔNG CỤ (SIDEBAR) ---
 st.sidebar.header("⚙️ Cấu hình hệ thống")
 
-# Lấy API Key an toàn từ Streamlit Secrets (nếu đã cấu hình) hoặc nhập trực tiếp
-api_key_input = st.sidebar.text_input(
-    "DeepSeek API Key:",
-    type="password",
-    value=(
-        st.secrets.get("DEEPSEEK_API_KEY", "")
-        if "DEEPSEEK_API_KEY" in st.secrets
-        else ""
-    ),
-)
+# Nhập Gemini API Key lấy từ Google AI Studio
+api_key_input = st.sidebar.text_input("Gemini API Key:", type="password")
 
 st.sidebar.divider()
 st.sidebar.subheader("📊 Thông tin Thị trường & Lệnh")
@@ -86,59 +81,51 @@ tech_indicators = st.sidebar.text_area(
 # --- XỬ LÝ KHI BẤM NÚT PHÂN TÍCH ---
 if st.sidebar.button("🚀 Chạy Phân Tích Định Lượng & DCA"):
   if not api_key_input:
-    st.error(
-        "⚠️ Vui lòng nhập DeepSeek API Key ở ô bên trên hoặc cấu hình trong"
-        " Secrets!"
-    )
+    st.error("⚠️ Vui lòng nhập Gemini API Key ở ô bên trên!")
   else:
-    # Khởi tạo DeepSeek Client (Sử dụng base_url chính thức của DeepSeek)
-    client = OpenAI(api_key=api_key_input, base_url="https://api.deepseek.com")
+    try:
+      # Khởi tạo GenAI Client theo chuẩn mới của Google
+      client = genai.Client(api_key=api_key_input)
 
-    # Xây dựng Prompt chuyên sâu tùy theo thị trường
-    prompt = f"""
-        Bạn là một chuyên gia phân tích định lượng tài chính và quản trị rủi ro chuyên nghiệp (Quant Trader). 
-        Hãy lập một kế hoạch giao dịch và chiến lược DCA (Dollar-Cost Averaging) chi tiết dựa trên dữ liệu sau:
-        - Thị trường: {market_category} - Mã: {symbol}
-        - Tổng vốn phân bổ: {capital:,.0f}
-        - Tình trạng vị thế hiện tại: {current_status}
-        - Dữ liệu kỹ thuật / Hỗ trợ: {tech_indicators}
+      # Xây dựng Prompt chuyên sâu
+      prompt = f"""
+            Bạn là một chuyên gia phân tích định lượng tài chính và quản trị rủi ro chuyên nghiệp (Quant Trader). 
+            Hãy lập một kế hoạch giao dịch và chiến lược DCA (Dollar-Cost Averaging) chi tiết dựa trên dữ liệu sau:
+            - Thị trường: {market_category} - Mã: {symbol}
+            - Tổng vốn phân bổ: {capital:,.0f}
+            - Tình trạng vị thế hiện tại: {current_status}
+            - Dữ liệu kỹ thuật / Hỗ trợ: {tech_indicators}
 
-        Yêu cầu cấu trúc đầu ra bắt buộc bằng tiếng Việt:
-        1. **NHẬN ĐỊNH XU HƯỚNG:** Đánh giá nhanh ngắn hạn và rủi ro hiện tại của mã tài sản này.
-        2. **KẾ HOẠCH QUẢN TRỊ VỊ THẾ HIỆN TẠI:** Đánh giá trạng thái đang âm/lãi và mức độ rủi ro vốn.
-        3. **CHIẾN LƯỢC RẢI VỐN DCA (Nếu thị trường tiếp tục đi ngược hướng):** 
-           - Mốc DCA 1: Giá [...] - Tỷ trọng vốn/Khối lượng đề xuất: [...] - Cơ sở kỹ thuật: [...]
-           - Mốc DCA 2: Giá [...] - Tỷ trọng vốn/Khối lượng đề xuất: [...] - Cơ sở kỹ thuật: [...]
-        4. **QUẢN TRỊ RỦI RO & THOÁT LỆNH:** Điểm Stop Loss tổng (SL) cho toàn bộ chiến lược và Mục tiêu chốt lời (TP).
-        """
+            Yêu cầu cấu trúc đầu ra bắt buộc bằng tiếng Việt:
+            1. **NHẬN ĐỊNH XU HƯỚNG:** Đánh giá nhanh ngắn hạn và rủi ro hiện tại của mã tài sản này.
+            2. **KẾ HOẠCH QUẢN TRỊ VỊ THẾ HIỆN TẠI:** Đánh giá trạng thái đang âm/lãi và mức độ rủi ro vốn.
+            3. **CHIẾN LƯỢC RẢI VỐN DCA (Nếu thị trường tiếp tục đi ngược hướng):** 
+               - Mốc DCA 1: Giá [...] - Tỷ trọng vốn/Khối lượng đề xuất: [...] - Cơ sở kỹ thuật: [...]
+               - Mốc DCA 2: Giá [...] - Tỷ trọng vốn/Khối lượng đề xuất: [...] - Cơ sở kỹ thuật: [...]
+            4. **QUẢN TRỊ RỦI RO & THOÁT LỆNH:** Điểm Stop Loss tổng (SL) cho toàn bộ chiến lược và Mục tiêu chốt lời (TP).
+            """
 
-    with st.spinner(
-        "🔄 DeepSeek đang tính toán xác suất và lập kế hoạch chiến lược..."
-    ):
-      try:
-        # Sử dụng model deepseek-chat (hoặc deepseek-reasoner nếu cần tư duy suy luận cực sâu)
-        response = client.chat.completions.create(
-            model="deepseek-chat",
-            messages=[
-                {
-                    "role": "system",
-                    "content": (
-                        "Bạn là trợ lý phân tích định lượng tài chính xuất sắc,"
-                        " đưa ra các con số tính toán rủi ro và DCA cực kỳ sắc"
-                        " bén."
-                    ),
-                },
-                {"role": "user", "content": prompt},
-            ],
-            stream=False,
+      with st.spinner(
+          "🔄 Google Gemini đang tính toán xác suất và lập kế hoạch chiến"
+          " lược..."
+      ):
+        # Gọi model gemini-2.5-flash (hoặc gemini-2.5-pro cho suy luận sâu)
+        response = client.models.generate_content(
+            model="gemini-2.5-flash",
+            contents=prompt,
+            config=types.GenerateContentConfig(
+                system_instruction=(
+                    "Bạn là trợ lý phân tích định lượng tài chính xuất sắc,"
+                    " đưa ra các con số tính toán rủi ro và DCA cực kỳ sắc bén."
+                ),
+            ),
         )
-        result = response.choices[0].message.content
 
         # Hiển thị kết quả ra màn hình chính
         st.success("✅ Phân tích hoàn tất thành công!")
         st.markdown("---")
         st.markdown(f"### 📈 Báo cáo Chiến lược Định lượng cho: **{symbol}**")
-        st.markdown(result)
+        st.markdown(response.text)
 
-      except Exception as e:
-        st.error(f"❌ Đã xảy ra lỗi khi kết nối DeepSeek API: {e}")
+    except Exception as e:
+        st.error(f"❌ Đã xảy ra lỗi khi kết nối Gemini API: {e}")
