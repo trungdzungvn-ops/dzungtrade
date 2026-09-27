@@ -342,11 +342,12 @@ def render_chart(df, buy_df, current_price, title):
 
     if buy_df is not None and not buy_df.empty:
         for _, row in buy_df.iterrows():
+            label = row["Mức"] if "Mức" in buy_df.columns else row["Mốc"]
             fig.add_hline(
                 y=row["Giá"],
                 line_dash="dot",
                 annotation_text=(
-                    f"{row['Mốc']} {row['Giá']:,.2f}"
+                    f"{label} {row['Giá']:,.2f}"
                 ),
                 annotation_position="right",
             )
