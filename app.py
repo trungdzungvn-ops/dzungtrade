@@ -61,6 +61,7 @@ def load_forex(symbol):
     """
     mapping = {
         "XAUUSD": "GC=F",
+        "BTCUSD": "BTC-USD",
         "EURUSD": "EURUSD=X",
         "GBPUSD": "GBPUSD=X",
         "USDJPY": "JPY=X",
@@ -595,6 +596,7 @@ with tab_fx:
             "Symbol",
             [
                 "XAUUSD",
+                "BTCUSD",
                 "EURUSD",
                 "GBPUSD",
                 "USDJPY",
@@ -695,6 +697,13 @@ with tab_fx:
                 st.warning(
                     "XAUUSD đang dùng GC=F làm dữ liệu tham chiếu. "
                     "Giá/contract size/spread của broker MT4/MT5 có thể khác."
+                )
+
+            if fx_symbol == "BTCUSD":
+                st.warning(
+                    "BTCUSD đang dùng BTC-USD làm dữ liệu tham chiếu. "
+                    "Giá, spread, contract size và tick value của broker MT4/MT5 "
+                    "có thể khác."
                 )
 
         except Exception as e:
