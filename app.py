@@ -1,6 +1,7 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
+import re
 import plotly.graph_objects as go
 from openai import OpenAI
 from vnstock import Market
