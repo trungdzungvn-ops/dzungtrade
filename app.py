@@ -638,7 +638,7 @@ tab_vn, tab_fx = st.tabs(
 # TAB 1 — VN STOCK
 # ============================================================
 with tab_vn:
-    st.header("🇻🇳 Phân tích cổ phiếu Việt Nam")
+    st.header("🇻🇳 Phân tích cổ phiếu Việt Nam — REVERSAL → Điểm mua & DCA")
 
     col1, col2, col3 = st.columns(3)
 
@@ -680,6 +680,9 @@ with tab_vn:
                 f"{vn_symbol}: đã tải {len(vn_df):,} phiên dữ liệu."
             )
 
+            # REVERSAL được đưa lên đầu kết quả phân tích
+            render_vn_reversal(vn_df, vn_symbol)
+
             render_common_analysis(
                 vn_df,
                 vn_symbol,
@@ -691,8 +694,6 @@ with tab_vn:
                 api_key=vn_api,
             )
 
-            render_vn_reversal(vn_df, vn_symbol)
-
         except Exception as e:
             st.error(f"❌ Lỗi VN Stock: {e}")
 
@@ -700,7 +701,7 @@ with tab_vn:
 # TAB 2 — FOREX / XAUUSD
 # ============================================================
 with tab_fx:
-    st.header("🌎 Forex / XAUUSD — Phân tích điểm mua & DCA")
+    st.header("🌎 Forex / XAUUSD — REVERSAL → Điểm mua & DCA")
 
     f1, f2, f3 = st.columns(3)
 
@@ -795,6 +796,9 @@ with tab_fx:
                 f"{fx_symbol}: đã tải {len(fx_df):,} phiên dữ liệu."
             )
 
+            # REVERSAL được đưa lên đầu kết quả phân tích
+            render_reversal_panel(fx_symbol, api_key=fx_api)
+
             render_common_analysis(
                 fx_df,
                 fx_symbol,
@@ -805,8 +809,6 @@ with tab_fx:
                 contract_size=fx_contract,
                 api_key=fx_api,
             )
-
-            render_reversal_panel(fx_symbol, api_key=fx_api)
 
             if fx_symbol == "XAUUSD":
                 st.warning(
