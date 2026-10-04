@@ -423,6 +423,222 @@ def render_vn_reversal(df,symbol):
     else: st.warning("🟡 D1/W chưa đồng thuận reversal.")
 
 
+
+# ============================================================
+# VN30 SCANNER — D1 / W REVERSAL SUMMARY
+# ============================================================
+VN30_SYMBOLS = [
+    "ACB", "BCM", "BID", "BVH", "CTG", "FPT", "GAS", "GVR", "HDB",
+    "HPG", "MBB", "MSN", "MWG", "PLX", "POW", "SAB", "SHB", "SSB",
+    "SSI", "STB", "TCB", "TPB", "VCB", "VHM", "VIB", "VIC", "VJC",
+    "VNM", "VPB", "VRE"
+]
+
+@st.cache_data(ttl=300)
+def vn30_reversal_scan():
+    rows = []
+
+    for symbol in VN30_SYMBOLS:
+        try:
+            df = load_vn_stock(symbol, days=500)
+            d1 = reversal_analysis(df)
+
+            weekly = (
+                df.set_index("date")
+                .resample("W")
+                .agg({
+                    "open": "first",
+                    "high": "max",
+                    "low": "min",
+                    "close": "last",
+                    "volume": "sum"
+                })
+                .dropna()
+                .reset_index()
+            )
+            w = reversal_analysis(weekly)
+
+            if d1 is None or w is None:
+                continue
+
+            # Tổng hợp D1/W: mỗi khung đóng góp 1 score.
+            total_score = d1["score"] + w["score"]
+
+            if d1["score"] >= 2 and w["score"] >= 2:
+                summary = "🟢 REV UP"
+            elif d1["score"] <= -2 and w["score"] <= -2:
+                summary = "🔴 REV DN"
+            elif total_score > 0:
+                summary = "🟡 UP nhẹ"
+            elif total_score < 0:
+                summary = "🟠 DN nhẹ"
+            else:
+                summary = "⚪ FLAT"
+
+            rows.append({
+                "Mã": symbol,
+                "Giá": d1["price"],
+                "D1 REV": d1["direction"],
+                "D1 ↑%": d1["up_prob"],
+                "D1 ↓%": d1["down_prob"],
+                "W REV": w["direction"],
+                "W ↑%": w["up_prob"],
+                "W ↓%": w["down_prob"],
+                "Score D1": d1["score"],
+                "Score W": w["score"],
+                "Tổng Score": total_score,
+                "Tóm tắt": summary,
+                "Xu hướng D1": d1["trend"],
+                "Xu hướng W": w["trend"],
+            })
+
+        except Exception as e:
+            rows.append({
+                "Mã": symbol,
+                "Giá": np.nan,
+                "D1 REV": "N/A",
+                "D1 ↑%": np.nan,
+                "D1 ↓%": np.nan,
+                "W REV": "N/A",
+                "W ↑%": np.nan,
+                "W ↓%": np.nan,
+                "Score D1": np.nan,
+                "Score W": np.nan,
+                "Tổng Score": np.nan,
+                "Tóm tắt": f"⚠️ Lỗi",
+                "Xu hướng D1": "N/A",
+                "Xu hướng W": "N/A",
+            })
+
+    return pd.DataFrame(rows)
+
+
+def render_vn30_scanner():
+    st.header("📊 VN30 — REVERSAL D1 / W")
+    st.caption(
+        "Quét toàn bộ 30 mã VN30. D1 dùng để xác định tín hiệu gần hiện tại; "
+        "W dùng để xác nhận xu hướng lớn. ↑/↓ là tỷ trọng tín hiệu kỹ thuật "
+        "từ rule-based model, không phải xác suất thắng."
+    )
+
+    if st.button("🔄 QUÉT LẠI TOÀN BỘ VN30", type="primary", key="vn30_scan"):
+        vn30_reversal_scan.clear()
+
+    with st.spinner("Đang quét 30 mã VN30 — D1 / W..."):
+        scan = vn30_reversal_scan()
+
+    if scan.empty:
+        st.error("Không có dữ liệu VN30.")
+        return
+
+    valid = scan.dropna(subset=["Tổng Score"]).copy()
+
+    up_count = int((valid["Tổng Score"] > 0).sum())
+    down_count = int((valid["Tổng Score"] < 0).sum())
+    strong_up = int(
+        ((valid["D1 REV"] == "REV UP") & (valid["W REV"] == "REV UP")).sum()
+    )
+    strong_down = int(
+        ((valid["D1 REV"] == "REV DN") & (valid["W REV"] == "REV DN")).sum()
+    )
+
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("VN30 có bias UP", f"{up_count}")
+    c2.metric("VN30 có bias DN", f"{down_count}")
+    c3.metric("D1 + W REV UP", f"{strong_up}")
+    c4.metric("D1 + W REV DN", f"{strong_down}")
+
+    # Sắp xếp mã mạnh nhất trước.
+    display = scan.sort_values(
+        "Tổng Score", ascending=False, na_position="last"
+    ).copy()
+
+    for col in ["D1 ↑%", "D1 ↓%", "W ↑%", "W ↓%"]:
+        display[col] = display[col].map(
+            lambda x: "N/A" if pd.isna(x) else f"{x:.1f}%"
+        )
+
+    display["Giá"] = display["Giá"].map(
+        lambda x: "N/A" if pd.isna(x) else f"{x:,.2f}"
+    )
+
+    display["Score D1"] = display["Score D1"].map(
+        lambda x: "N/A" if pd.isna(x) else f"{x:+.0f}"
+    )
+    display["Score W"] = display["Score W"].map(
+        lambda x: "N/A" if pd.isna(x) else f"{x:+.0f}"
+    )
+    display["Tổng Score"] = display["Tổng Score"].map(
+        lambda x: "N/A" if pd.isna(x) else f"{x:+.0f}"
+    )
+
+    st.dataframe(
+        display[
+            [
+                "Mã", "Giá",
+                "D1 REV", "D1 ↑%", "D1 ↓%",
+                "W REV", "W ↑%", "W ↓%",
+                "Score D1", "Score W", "Tổng Score",
+                "Tóm tắt"
+            ]
+        ],
+        use_container_width=True,
+        hide_index=True,
+    )
+
+    # Top cơ hội theo mức đồng thuận D1/W.
+    strong = valid[
+        (valid["D1 REV"] == "REV UP") &
+        (valid["W REV"] == "REV UP")
+    ].sort_values("Tổng Score", ascending=False)
+
+    weak = valid[
+        (valid["D1 REV"] == "REV DN") &
+        (valid["W REV"] == "REV DN")
+    ].sort_values("Tổng Score", ascending=True)
+
+    col_up, col_dn = st.columns(2)
+
+    with col_up:
+        st.subheader("🟢 Đồng thuận REV UP")
+        if strong.empty:
+            st.info("Chưa có mã D1 + W cùng REV UP.")
+        else:
+            st.dataframe(
+                strong[["Mã", "Giá", "D1 ↑%", "W ↑%", "Tổng Score"]]
+                .assign(
+                    **{
+                        "D1 ↑%": strong["D1 ↑%"].map(lambda x: f"{x:.1f}%"),
+                        "W ↑%": strong["W ↑%"].map(lambda x: f"{x:.1f}%"),
+                    }
+                ),
+                use_container_width=True,
+                hide_index=True,
+            )
+
+    with col_dn:
+        st.subheader("🔴 Đồng thuận REV DN")
+        if weak.empty:
+            st.info("Chưa có mã D1 + W cùng REV DN.")
+        else:
+            st.dataframe(
+                weak[["Mã", "Giá", "D1 ↓%", "W ↓%", "Tổng Score"]]
+                .assign(
+                    **{
+                        "D1 ↓%": weak["D1 ↓%"].map(lambda x: f"{x:.1f}%"),
+                        "W ↓%": weak["W ↓%"].map(lambda x: f"{x:.1f}%"),
+                    }
+                ),
+                use_container_width=True,
+                hide_index=True,
+            )
+
+    st.caption(
+        "Lưu ý: danh sách VN30 được khai báo trong ứng dụng; dữ liệu giá lấy từ Vnstock. "
+        "Tín hiệu reversal chỉ là bộ lọc kỹ thuật, không phải khuyến nghị mua/bán."
+    )
+
+
 # ============================================================
 # UI HELPERS
 # ============================================================
@@ -630,8 +846,12 @@ DCA:
 # ============================================================
 # TWO TABS
 # ============================================================
-tab_vn, tab_fx = st.tabs(
-    ["🇻🇳 VN STOCK — VNSTOCK", "🌎 FOREX / XAUUSD"]
+tab_vn, tab_fx, tab_vn30 = st.tabs(
+    [
+        "🇻🇳 VN STOCK — VNSTOCK",
+        "🌎 FOREX / XAUUSD",
+        "📊 VN30 SCANNER"
+    ]
 )
 
 # ============================================================
@@ -825,6 +1045,12 @@ with tab_fx:
 
         except Exception as e:
             st.error(f"❌ Lỗi Forex/XAUUSD: {e}")
+
+# ============================================================
+# TAB 3 — VN30 SCANNER
+# ============================================================
+with tab_vn30:
+    render_vn30_scanner()
 
 st.markdown("---")
 st.caption(
