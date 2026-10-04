@@ -428,17 +428,59 @@ def render_vn_reversal(df,symbol):
 # VN30 SCANNER — D1 / W REVERSAL SUMMARY
 # ============================================================
 VN30_SYMBOLS = [
-    "ACB", "BCM", "BID", "BVH", "CTG", "FPT", "GAS", "GVR", "HDB",
-    "HPG", "MBB", "MSN", "MWG", "PLX", "POW", "SAB", "SHB", "SSB",
-    "SSI", "STB", "TCB", "TPB", "VCB", "VHM", "VIB", "VIC", "VJC",
-    "VNM", "VPB", "VRE"
+    "ACB","BCM","BID","BVH","CTG","FPT","GAS","GVR","HDB","HPG",
+    "MBB","MSN","MWG","PLX","POW","SAB","SHB","SSB","SSI","STB",
+    "TCB","TPB","VCB","VHM","VIB","VIC","VJC","VNM","VPB","VRE"
 ]
 
+BLUECHIP_SYMBOLS = [
+    "VCB","BID","CTG","TCB","MBB","ACB","VPB","FPT","HPG","VHM",
+    "VIC","VNM","MSN","MWG","GAS","SAB","SSI","STB","SHB","VRE"
+]
+
+BANK_SYMBOLS = [
+    "VCB","BID","CTG","TCB","MBB","ACB","VPB","HDB","VIB","TPB",
+    "STB","SHB","SSB","EIB","OCB","MSB","LPB","NAB","VAB","BAB"
+]
+
+SECURITIES_SYMBOLS = [
+    "SSI","VND","VCI","HCM","MBS","SHS","FTS","BSI","CTS","VIX",
+    "ORS","AGR","TVS","VDS","VFS"
+]
+
+STEEL_SYMBOLS = [
+    "HPG","HSG","NKG","TLH","TVN","SMC","POM","VGS"
+]
+
+ENERGY_SYMBOLS = [
+    "GAS","PLX","POW","PVD","PVS","BSR","OIL","PVC","PVB","CNG"
+]
+
+REAL_ESTATE_SYMBOLS = [
+    "VHM","VIC","VRE","NVL","KDH","DXG","DIG","PDR","CEO","NLG",
+    "HDC","KBC","SZC","IDC","IJC"
+]
+
+TECH_CONSUMER_SYMBOLS = [
+    "FPT","MWG","DGW","PET","PNJ","VNM","MSN","SAB","VHC","DBC"
+]
+
+STOCK_GROUPS = {
+    "VN30": VN30_SYMBOLS,
+    "Bluechip": BLUECHIP_SYMBOLS,
+    "Ngân hàng": BANK_SYMBOLS,
+    "Chứng khoán": SECURITIES_SYMBOLS,
+    "Thép / vật liệu": STEEL_SYMBOLS,
+    "Dầu khí / năng lượng": ENERGY_SYMBOLS,
+    "Bất động sản": REAL_ESTATE_SYMBOLS,
+    "Công nghệ / tiêu dùng": TECH_CONSUMER_SYMBOLS,
+}
+
 @st.cache_data(ttl=300)
-def vn30_reversal_scan():
+def stock_reversal_scan(symbols_tuple):
     rows = []
 
-    for symbol in VN30_SYMBOLS:
+    for symbol in symbols_tuple:
         try:
             df = load_vn_stock(symbol, days=500)
             d1 = reversal_analysis(df)
@@ -461,7 +503,6 @@ def vn30_reversal_scan():
             if d1 is None or w is None:
                 continue
 
-            # Tổng hợp D1/W: mỗi khung đóng góp 1 score.
             total_score = d1["score"] + w["score"]
 
             if d1["score"] >= 2 and w["score"] >= 2:
@@ -488,8 +529,6 @@ def vn30_reversal_scan():
                 "Score W": w["score"],
                 "Tổng Score": total_score,
                 "Tóm tắt": summary,
-                "Xu hướng D1": d1["trend"],
-                "Xu hướng W": w["trend"],
             })
 
         except Exception as e:
@@ -505,12 +544,142 @@ def vn30_reversal_scan():
                 "Score D1": np.nan,
                 "Score W": np.nan,
                 "Tổng Score": np.nan,
-                "Tóm tắt": f"⚠️ Lỗi",
-                "Xu hướng D1": "N/A",
-                "Xu hướng W": "N/A",
+                "Tóm tắt": "⚠️ Lỗi",
             })
 
     return pd.DataFrame(rows)
+
+
+def render_stock_scanner():
+    st.header("📊 STOCK SCANNER — REVERSAL D1 / W")
+    st.caption(
+        "Chọn nhóm cổ phiếu hoặc tự nhập danh sách mã. "
+        "Hệ thống quét D1 + W và xếp hạng theo mức độ đồng thuận kỹ thuật."
+    )
+
+    group_options = list(STOCK_GROUPS.keys()) + ["⭐ Tự chọn"]
+    selected_group = st.selectbox(
+        "Nhóm cổ phiếu cần quét",
+        group_options,
+        key="scanner_group",
+    )
+
+    if selected_group == "⭐ Tự chọn":
+        custom_text = st.text_area(
+            "Nhập danh sách mã, cách nhau bằng dấu phẩy",
+            value="FPT, HPG, MBB, TCB, SSI, VCI, VHM, VIC, MWG",
+            key="scanner_custom",
+        )
+        symbols = [
+            x.strip().upper()
+            for x in re.split(r"[,\s;]+", custom_text)
+            if x.strip()
+        ]
+        symbols = list(dict.fromkeys(symbols))
+    else:
+        symbols = STOCK_GROUPS[selected_group]
+
+    st.write(f"**Số mã sẽ quét: {len(symbols)}**")
+    st.code(", ".join(symbols), language="text")
+
+    only_consensus = st.checkbox(
+        "Chỉ hiện mã D1 + W đồng thuận REV UP",
+        value=False,
+        key="scanner_consensus",
+    )
+
+    if st.button("🔄 QUÉT CỔ PHIẾU", type="primary", key="stock_scan"):
+        stock_reversal_scan.clear()
+
+    with st.spinner(f"Đang quét {len(symbols)} mã — D1 / W..."):
+        scan = stock_reversal_scan(tuple(symbols))
+
+    if scan.empty:
+        st.error("Không có dữ liệu.")
+        return
+
+    valid = scan.dropna(subset=["Tổng Score"]).copy()
+
+    if only_consensus:
+        valid = valid[
+            (valid["D1 REV"] == "REV UP") &
+            (valid["W REV"] == "REV UP")
+        ]
+
+    if valid.empty:
+        st.warning("Không có mã nào thỏa điều kiện hiện tại.")
+        return
+
+    up_count = int((valid["Tổng Score"] > 0).sum())
+    down_count = int((valid["Tổng Score"] < 0).sum())
+    consensus_up = int(
+        ((valid["D1 REV"] == "REV UP") &
+         (valid["W REV"] == "REV UP")).sum()
+    )
+    consensus_dn = int(
+        ((valid["D1 REV"] == "REV DN") &
+         (valid["W REV"] == "REV DN")).sum()
+    )
+
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("Bias UP", up_count)
+    c2.metric("Bias DN", down_count)
+    c3.metric("D1 + W REV UP", consensus_up)
+    c4.metric("D1 + W REV DN", consensus_dn)
+
+    display = valid.sort_values(
+        "Tổng Score", ascending=False, na_position="last"
+    ).copy()
+
+    for col in ["D1 ↑%", "D1 ↓%", "W ↑%", "W ↓%"]:
+        display[col] = display[col].map(
+            lambda x: "N/A" if pd.isna(x) else f"{x:.1f}%"
+        )
+
+    display["Giá"] = display["Giá"].map(
+        lambda x: "N/A" if pd.isna(x) else f"{x:,.2f}"
+    )
+
+    for col in ["Score D1", "Score W", "Tổng Score"]:
+        display[col] = display[col].map(
+            lambda x: "N/A" if pd.isna(x) else f"{x:+.0f}"
+        )
+
+    st.subheader("🏆 Xếp hạng cổ phiếu")
+    st.dataframe(
+        display[
+            [
+                "Mã", "Giá",
+                "D1 REV", "D1 ↑%", "D1 ↓%",
+                "W REV", "W ↑%", "W ↓%",
+                "Score D1", "Score W", "Tổng Score", "Tóm tắt"
+            ]
+        ],
+        use_container_width=True,
+        hide_index=True,
+    )
+
+    top10 = valid.sort_values("Tổng Score", ascending=False).head(10)
+
+    st.subheader("⭐ TOP 10 tín hiệu tích cực")
+    st.dataframe(
+        top10[["Mã", "Giá", "D1 REV", "W REV", "D1 ↑%", "W ↑%", "Tổng Score"]]
+        .assign(
+            **{
+                "Giá": top10["Giá"].map(lambda x: f"{x:,.2f}"),
+                "D1 ↑%": top10["D1 ↑%"].map(lambda x: f"{x:.1f}%"),
+                "W ↑%": top10["W ↑%"].map(lambda x: f"{x:.1f}%"),
+                "Tổng Score": top10["Tổng Score"].map(lambda x: f"{x:+.0f}"),
+            }
+        ),
+        use_container_width=True,
+        hide_index=True,
+    )
+
+    st.caption(
+        "↑/↓ là tỷ trọng tín hiệu kỹ thuật nội bộ, không phải xác suất thắng. "
+        "TOP 10 chỉ phục vụ sàng lọc; cần kiểm tra điểm mua, DCA và quản trị vốn trước giao dịch."
+    )
 
 
 def render_vn30_scanner():
@@ -1050,7 +1219,7 @@ with tab_fx:
 # TAB 3 — VN30 SCANNER
 # ============================================================
 with tab_vn30:
-    render_vn30_scanner()
+    render_stock_scanner()
 
 st.markdown("---")
 st.caption(
