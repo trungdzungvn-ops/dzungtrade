@@ -312,6 +312,117 @@ Phân biệt dữ liệu kỹ thuật và kịch bản.
     return response.choices[0].message.content
 
 
+
+# ============================================================
+# MULTI-TIMEFRAME REVERSAL ENGINE
+# ============================================================
+@st.cache_data(ttl=180)
+def load_intraday_forex(symbol, interval):
+    mapping={"XAUUSD":"GC=F","BTCUSD":"BTC-USD","EURUSD":"EURUSD=X","GBPUSD":"GBPUSD=X","USDJPY":"JPY=X","AUDUSD":"AUDUSD=X","USDCAD":"CAD=X","USDCHF":"CHF=X","NZDUSD":"NZDUSD=X"}
+    ticker=mapping.get(symbol.upper(),symbol.upper())
+    period={"5m":"30d","15m":"60d","60m":"730d","1d":"2y","1wk":"5y"}.get(interval,"60d")
+    df=yf.Ticker(ticker).history(period=period,interval=interval,auto_adjust=False)
+    if df is None or df.empty: raise ValueError(f"Không có dữ liệu {symbol} {interval}.")
+    df=df.reset_index(); df.columns=[str(c).lower().strip().replace(" ","_") for c in df.columns]
+    if "datetime" in df.columns: df["date"]=pd.to_datetime(df["datetime"],errors="coerce")
+    elif "date" in df.columns: df["date"]=pd.to_datetime(df["date"],errors="coerce")
+    else: df["date"]=pd.to_datetime(df.index)
+    for c in ["open","high","low","close","volume"]:
+        if c not in df.columns: df[c]=0.0
+        df[c]=pd.to_numeric(df[c],errors="coerce")
+    return df.dropna(subset=["date","open","high","low","close"]).sort_values("date").reset_index(drop=True)
+
+def reversal_analysis(df):
+    d=add_indicators(df.copy())
+    if len(d)<60: return None
+    x=d.iloc[-1]; p=d.iloc[-2]; price=float(x.close)
+    rsi=float(x.RSI14) if pd.notna(x.RSI14) else 50.0
+    score=0; signals=[]
+    prsi=float(p.RSI14) if pd.notna(p.RSI14) else rsi
+    if rsi<=30: score+=2; signals.append("RSI quá bán")
+    elif rsi<40: score+=1; signals.append("RSI thấp")
+    elif rsi>=70: score-=2; signals.append("RSI quá mua")
+    elif rsi>60: score-=1; signals.append("RSI cao")
+    if prsi<rsi and rsi>=30: score+=1; signals.append("RSI quay lên")
+    if prsi>rsi and rsi<=70: score-=1; signals.append("RSI quay xuống")
+    macd=float(x.MACD); sig=float(x.MACD_SIGNAL); pm=float(p.MACD); ps=float(p.MACD_SIGNAL)
+    if pm<=ps and macd>sig: score+=2; signals.append("MACD bullish cross")
+    elif pm>=ps and macd<sig: score-=2; signals.append("MACD bearish cross")
+    ma20=float(x.MA20)
+    if price>ma20: score+=1; signals.append("Giá trên MA20")
+    else: score-=1; signals.append("Giá dưới MA20")
+    if price<=float(x.BB_LOWER)*1.003: score+=1; signals.append("Chạm Bollinger Lower")
+    if price>=float(x.BB_UPPER)*0.997: score-=1; signals.append("Chạm Bollinger Upper")
+    body=abs(float(x.close)-float(x.open)); rng=max(float(x.high)-float(x.low),1e-9)
+    lw=min(float(x.open),float(x.close))-float(x.low); uw=float(x.high)-max(float(x.open),float(x.close))
+    if lw>body*1.5 and lw>rng*.35: score+=1; signals.append("Bullish rejection")
+    if uw>body*1.5 and uw>rng*.35: score-=1; signals.append("Bearish rejection")
+    ma50=float(x.MA50); ma200=float(x.MA200)
+    trend="Tăng" if ma20>ma50>ma200 else ("Giảm" if ma20<ma50<ma200 else "Chuyển tiếp / đi ngang")
+    if score>=4: state="🟢 Reversal tăng mạnh hơn"
+    elif score>=2: state="🟡 Reversal tăng — cần xác nhận"
+    elif score<=-4: state="🔴 Reversal giảm mạnh hơn"
+    elif score<=-2: state="🟠 Reversal giảm — cần xác nhận"
+    else: state="⚪ Chưa có reversal rõ"
+    # Điểm % dưới đây là confidence nội bộ của rule-based model, không phải xác suất thắng đã backtest.
+    up_prob=float(np.clip(50.0+score*4.1,5.0,95.0))
+    down_prob=100.0-up_prob
+    direction="REV UP" if up_prob>down_prob+3 else ("REV DN" if down_prob>up_prob+3 else "REV FLAT")
+    return {"price":price,"rsi":rsi,"score":score,"score_pct":max(-100,min(100,score*10)),"up_prob":up_prob,"down_prob":down_prob,"direction":direction,"state":state,"trend":trend,"signals":signals}
+
+def run_multi_timeframe_reversal(symbol):
+    results=[]
+    for tf,interval in {"M5":"5m","M15":"15m","H1":"60m","D1":"1d","W":"1wk"}.items():
+        try:
+            r=reversal_analysis(load_intraday_forex(symbol,interval))
+            if r: r["TF"]=tf; results.append(r)
+        except Exception as e:
+            results.append({"TF":tf,"price":np.nan,"rsi":np.nan,"score":np.nan,"score_pct":np.nan,"up_prob":np.nan,"down_prob":np.nan,"direction":"N/A","state":f"Không có dữ liệu: {e}","trend":"N/A","signals":[]})
+    return results
+
+def render_reversal_panel(symbol,api_key=""):
+    st.subheader("🔄 REVERSAL M5 / M15 / H1 / D1 / W")
+    st.caption("RSI + MACD + MA20 + Bollinger + nến từ chối. Reversal là bộ lọc kỹ thuật, không phải dự báo.")
+    with st.spinner(f"Đang phân tích REVERSAL {symbol}: M5 / M15 / H1 / D1 / W..."):
+        results=run_multi_timeframe_reversal(symbol)
+    valid=[r for r in results if pd.notna(r["score"])]
+    if not valid: st.error("Không lấy được dữ liệu reversal."); return
+    table=pd.DataFrame([{"TF":r["TF"],"Giá":r["price"],"RSI":r["rsi"],"REV":r.get("direction","N/A"),"↑ %":r.get("up_prob",np.nan),"↓ %":r.get("down_prob",np.nan),"Score":r["score_pct"],"Xu hướng":r["trend"],"Đánh giá":r["state"],"Tín hiệu":"; ".join(r["signals"][:4])} for r in results])
+    display=table.copy(); display["Giá"]=display["Giá"].map(lambda x:"N/A" if pd.isna(x) else f"{x:,.2f}"); display["RSI"]=display["RSI"].map(lambda x:"N/A" if pd.isna(x) else f"{x:.1f}"); display["↑ %"]=display["↑ %"].map(lambda x:"N/A" if pd.isna(x) else f"{x:.1f}%"); display["↓ %"]=display["↓ %"].map(lambda x:"N/A" if pd.isna(x) else f"{x:.1f}%"); display["Score"]=display["Score"].map(lambda x:"N/A" if pd.isna(x) else f"{x:+.0f}")
+    st.dataframe(display,use_container_width=True,hide_index=True)
+    bullish=sum(r["score"]>=2 for r in valid); bearish=sum(r["score"]<=-2 for r in valid)
+    a,b,c=st.columns(3); a.metric("TF bullish",f"{bullish}/{len(valid)}"); b.metric("TF bearish",f"{bearish}/{len(valid)}"); c.metric("Đa khung","BULLISH" if bullish>=3 else ("BEARISH" if bearish>=3 else "CHƯA ĐỒNG THUẬN"))
+    if bullish>=3: st.success("🟢 Reversal tăng có đồng thuận đa khung. M5/M15 dùng timing; H1/D1 xác nhận trước khi tăng DCA.")
+    elif bearish>=3: st.error("🔴 Reversal giảm có đồng thuận đa khung. Không tăng lot chỉ vì giá đang giảm.")
+    else: st.warning("🟡 Chưa có đồng thuận đa khung. Không nên dùng riêng M5 để quyết định DCA lớn.")
+    with st.expander("🔍 Chi tiết REVERSAL từng timeframe", expanded=True):
+        for r in results:
+            if pd.isna(r["score"]):
+                st.markdown(f"**{r['TF']}** — {r['state']}")
+                continue
+            st.markdown(f"**{r['TF']}**  **{r['direction']}**  ↑{r['up_prob']:.1f}%  ↓{r['down_prob']:.1f}%")
+            st.caption(f"RSI {r['rsi']:.1f} • Score {r['score']:+d} • {r['trend']}")
+            if r["signals"]: st.write(" • ".join(r["signals"]))
+    if api_key and valid:
+        snapshot="\n".join(f"{r['TF']}: score={r['score']}, RSI={r['rsi']:.2f}, trend={r['trend']}, state={r['state']}, signals={'; '.join(r['signals'])}" for r in valid)
+        try:
+            st.subheader("🤖 DeepSeek — Reversal"); st.markdown(deepseek_analysis(api_key,f"{symbol} Multi-Timeframe Reversal",snapshot))
+        except Exception as e: st.error(f"DeepSeek Reversal lỗi: {e}")
+
+def render_vn_reversal(df,symbol):
+    st.subheader("🔄 REVERSAL VN STOCK — D1 / W")
+    d1=reversal_analysis(df)
+    weekly=df.set_index("date").resample("W").agg({"open":"first","high":"max","low":"min","close":"last","volume":"sum"}).dropna().reset_index()
+    w=reversal_analysis(weekly)
+    out=pd.DataFrame([{"TF":tf,"Giá":r["price"],"RSI":r["rsi"],"Score":r["score_pct"],"Xu hướng":r["trend"],"Đánh giá":r["state"],"Tín hiệu":"; ".join(r["signals"][:4])} for tf,r in [("D1",d1),("W",w)]])
+    out["Giá"]=out["Giá"].map(lambda x:f"{x:,.2f}"); out["RSI"]=out["RSI"].map(lambda x:f"{x:.1f}"); out["Score"]=out["Score"].map(lambda x:f"{x:+.0f}")
+    st.dataframe(out,use_container_width=True,hide_index=True)
+    bullish=sum(r["score"]>=2 for r in [d1,w]); bearish=sum(r["score"]<=-2 for r in [d1,w])
+    if bullish==2: st.success("🟢 D1 + W cùng nghiêng về reversal tăng.")
+    elif bearish==2: st.error("🔴 D1 + W cùng nghiêng về reversal giảm.")
+    else: st.warning("🟡 D1/W chưa đồng thuận reversal.")
+
+
 # ============================================================
 # UI HELPERS
 # ============================================================
@@ -580,6 +691,8 @@ with tab_vn:
                 api_key=vn_api,
             )
 
+            render_vn_reversal(vn_df, vn_symbol)
+
         except Exception as e:
             st.error(f"❌ Lỗi VN Stock: {e}")
 
@@ -692,6 +805,8 @@ with tab_fx:
                 contract_size=fx_contract,
                 api_key=fx_api,
             )
+
+            render_reversal_panel(fx_symbol, api_key=fx_api)
 
             if fx_symbol == "XAUUSD":
                 st.warning(
