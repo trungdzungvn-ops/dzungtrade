@@ -6,6 +6,8 @@ import plotly.graph_objects as go
 from openai import OpenAI
 from vnstock import Market
 import yfinance as yf
+import requests
+from urllib.parse import quote_plus
 
 # ============================================================
 # PAGE
@@ -809,6 +811,153 @@ def render_vn30_scanner():
     )
 
 
+
+# ============================================================
+# STOCK NEWS — LATEST RSS + OPTIONAL DEEPSEEK SUMMARY
+# ============================================================
+@st.cache_data(ttl=600)
+def load_stock_news(symbol, limit=8):
+    """
+    Lấy tin mới nhất liên quan đến mã cổ phiếu từ Google News RSS.
+    Đây là lớp news độc lập với dữ liệu giá Vnstock.
+    """
+    query = quote_plus(f"{symbol.upper()} cổ phiếu")
+    url = f"https://news.google.com/rss/search?q={query}&hl=vi&gl=VN&ceid=VN:vi"
+
+    response = requests.get(
+        url,
+        timeout=15,
+        headers={"User-Agent": "Mozilla/5.0"},
+    )
+    response.raise_for_status()
+
+    import xml.etree.ElementTree as ET
+    root = ET.fromstring(response.content)
+
+    rows = []
+    for item in root.findall(".//item")[:limit]:
+        title = item.findtext("title", default="").strip()
+        link = item.findtext("link", default="").strip()
+        pub_date = item.findtext("pubDate", default="").strip()
+        source_node = item.find("source")
+        source = (
+            source_node.text.strip()
+            if source_node is not None and source_node.text
+            else ""
+        )
+        description = item.findtext("description", default="").strip()
+
+        if title:
+            rows.append({
+                "title": title,
+                "source": source,
+                "published": pub_date,
+                "link": link,
+                "description": description,
+            })
+
+    return rows
+
+
+def summarize_stock_news(api_key, symbol, news_rows):
+    """Tóm tắt nhanh các headline bằng DeepSeek nếu người dùng cung cấp API key."""
+    if not api_key or not news_rows:
+        return None
+
+    news_text = "\n".join(
+        f"{i+1}. {r['title']} | {r['source']} | {r['published']}"
+        for i, r in enumerate(news_rows[:8])
+    )
+
+    client = OpenAI(
+        api_key=api_key,
+        base_url="https://api.deepseek.com",
+    )
+
+    prompt = f"""
+Bạn là trợ lý phân tích cổ phiếu Việt Nam.
+
+Mã cổ phiếu: {symbol}
+
+Tin mới nhất:
+{news_text}
+
+Hãy tóm tắt bằng tiếng Việt, thật ngắn gọn:
+1. 2-3 diễn biến tin tức đáng chú ý nhất.
+2. Tin nào có khả năng hỗ trợ giá / tích cực.
+3. Tin nào có khả năng gây áp lực / tiêu cực.
+4. Một câu kết luận: Tác động tin tức hiện tại là TÍCH CỰC, TRUNG TÍNH hay TIÊU CỰC.
+
+Không tự bịa thông tin ngoài danh sách tin được cung cấp.
+Không coi tin tức là tín hiệu chắc chắn về giá.
+"""
+
+    response = client.chat.completions.create(
+        model="deepseek-chat",
+        messages=[
+            {
+                "role": "system",
+                "content": "Tóm tắt tin tức tài chính ngắn gọn, trung lập, không cam kết lợi nhuận.",
+            },
+            {"role": "user", "content": prompt},
+        ],
+        stream=False,
+    )
+
+    return response.choices[0].message.content
+
+
+def render_stock_news(symbol, api_key=""):
+    st.subheader(f"📰 Tin tức mới nhất — {symbol}")
+    st.caption(
+        "Nguồn headline: Google News RSS. Tin tức được hiển thị để tham khảo; "
+        "không thay thế phân tích kỹ thuật hoặc xác minh từ nguồn chính thức."
+    )
+
+    try:
+        with st.spinner(f"Đang tải tin mới nhất của {symbol}..."):
+            news_rows = load_stock_news(symbol, limit=8)
+
+        if not news_rows:
+            st.info(f"Chưa tìm thấy tin mới cho {symbol}.")
+            return
+
+        # Tóm tắt AI nằm trước danh sách headline.
+        if api_key:
+            try:
+                summary = summarize_stock_news(api_key, symbol, news_rows)
+                if summary:
+                    st.markdown("### 🤖 Tóm tắt tin tức")
+                    st.markdown(summary)
+            except Exception as e:
+                st.warning(f"Không tạo được tóm tắt DeepSeek: {e}")
+
+        st.markdown("### 📌 Headlines mới nhất")
+
+        for i, item in enumerate(news_rows, 1):
+            title = item["title"]
+            source = item["source"] or "Nguồn không xác định"
+            published = item["published"] or ""
+
+            st.markdown(
+                f"**{i}. {title}**  \n"
+                f"📰 {source}  •  🕒 {published}"
+            )
+
+            if item["link"]:
+                st.markdown(
+                    f"[Đọc bài viết →]({item['link']})"
+                )
+
+            st.divider()
+
+    except Exception as e:
+        st.warning(
+            f"Không lấy được news của {symbol}: {e}. "
+            "Bạn vẫn có thể sử dụng phần phân tích kỹ thuật bình thường."
+        )
+
+
 # ============================================================
 # UI HELPERS
 # ============================================================
@@ -968,6 +1117,17 @@ def render_common_analysis(df, asset_name, capital,
     r3.metric("+4 ATR", f"{price + 4 * atr:,.2f}")
 
     render_chart(df, buy_df, price, asset_name)
+
+    # Tin tức mới nhất cho cổ phiếu VN.
+    # Không gọi news cho Forex/XAUUSD/BTCUSD để tránh truy vấn sai nguồn.
+    vn_symbols = set(VN30_SYMBOLS) | set(BLUECHIP_SYMBOLS) | set(BANK_SYMBOLS) | set(
+        SECURITIES_SYMBOLS
+    ) | set(STEEL_SYMBOLS) | set(ENERGY_SYMBOLS) | set(REAL_ESTATE_SYMBOLS) | set(
+        TECH_CONSUMER_SYMBOLS
+    )
+
+    if str(asset_name).upper() in vn_symbols:
+        render_stock_news(str(asset_name).upper(), api_key=api_key)
 
     if api_key:
         snapshot = f"""
